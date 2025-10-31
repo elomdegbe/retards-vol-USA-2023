@@ -1,0 +1,90 @@
+/*
+   Objectif : Calculer les retards cumulés par compagnie aérienne 
+   et la proportion de chaque cause de retard, puis récupérer
+   le top 10 des compagnies les plus impactées par la météo.
+*/
+
+SELECT *
+FROM (
+    /* Sous-requête : agrégation des retards par compagnie */
+    SELECT 
+        f.Airline,  -- Nom de la compagnie aérienne
+
+        /* Somme des retards pour chaque cause, convertie en milliers d’heures (kH) */
+        ROUND(SUM(f.Delay_Weather)/60000.0, 2) AS total_weather_kh,      -- Retard dû à la météo
+        ROUND(SUM(f.Delay_Carrier)/60000.0, 2) AS total_carrier_kh,      -- Retard dû à la compagnie
+        ROUND(SUM(f.Delay_NAS)/60000.0, 2) AS total_nas_kh,              -- Retard dû au contrôle aérien (NAS)
+        ROUND(SUM(f.Delay_Security)/60000.0, 2) AS total_security_kh,    -- Retard dû à la sécurité
+        ROUND(SUM(f.Delay_LastAircraft)/60000.0, 2) AS total_lastaircraft_kh, -- Retard dû à l’avion précédent
+
+        /* Pourcentage de chaque cause dans le retard total de la compagnie */
+        ROUND(
+            SUM(f.Delay_Weather) * 100.0 / NULLIF(
+                SUM(f.Delay_Weather + f.Delay_Carrier + f.Delay_NAS + f.Delay_Security + f.Delay_LastAircraft), 0
+            ), 2
+        ) AS pct_weather,
+
+        ROUND(
+            SUM(f.Delay_Carrier) * 100.0 / NULLIF(
+                SUM(f.Delay_Weather + f.Delay_Carrier + f.Delay_NAS + f.Delay_Security + f.Delay_LastAircraft), 0
+            ), 2
+        ) AS pct_carrier,
+
+        ROUND(
+            SUM(f.Delay_NAS) * 100.0 / NULLIF(
+                SUM(f.Delay_Weather + f.Delay_Carrier + f.Delay_NAS + f.Delay_Security + f.Delay_LastAircraft), 0
+            ), 2
+        ) AS pct_nas,
+
+        ROUND(
+            SUM(f.Delay_Security) * 100.0 / NULLIF(
+                SUM(f.Delay_Weather + f.Delay_Carrier + f.Delay_NAS + f.Delay_Security + f.Delay_LastAircraft), 0
+            ), 2
+        ) AS pct_security,
+
+        ROUND(
+            SUM(f.Delay_LastAircraft) * 100.0 / NULLIF(
+                SUM(f.Delay_Weather + f.Delay_Carrier + f.Delay_NAS + f.Delay_Security + f.Delay_LastAircraft), 0
+            ), 2
+        ) AS pct_lastaircraft
+    FROM us_flights_2023 AS f
+    GROUP BY f.Airline  -- Agrégation par compagnie aérienne
+) AS airline_delays  -- Alias de la sous-requête
+ORDER BY pct_weather DESC  -- Trier par pourcentage de retard dû à la météo (du plus élevé)
+LIMIT 10;  -- Ne garder que les 10 premières compagnies
+
+
+/*
+   Objectif : Calculer le total des retards par cause pour tous les vols 
+   et afficher à la fois le total en milliers d’heures et la part (%) 
+   de chaque cause dans le retard total.
+*/
+
+-- Étape 1 : agrégation des retards par cause
+WITH delays AS ( 
+    SELECT
+        SUM(Delay_Weather) AS w,        -- Somme des retards dus à la météo
+        SUM(Delay_Carrier) AS c,        -- Somme des retards dus à la compagnie
+        SUM(Delay_NAS) AS n,            -- Somme des retards dus au contrôle aérien
+        SUM(Delay_Security) AS s,       -- Somme des retards dus à la sécurité
+        SUM(Delay_LastAircraft) AS l    -- Somme des retards dus à l’avion précédent
+    FROM us_flights_2023
+)
+
+-- Étape 2 : transformation des totaux en format exploitable pour un graphique
+SELECT cause, 
+       ROUND(total_minutes/60000.0, 2) AS total_hours_thousands,  -- Conversion minutes → milliers d’heures
+       pct_total                                                   -- Pourcentage du retard total par cause
+FROM (
+    -- On transforme les colonnes agrégées en lignes (format long)
+    SELECT 'Météo' AS cause, w AS total_minutes, ROUND(w*100.0/(w+c+n+s+l),2) AS pct_total FROM delays
+    UNION ALL
+    SELECT 'Compagnie', c, ROUND(c*100.0/(w+c+n+s+l),2) FROM delays
+    UNION ALL
+    SELECT 'Contrôle aérien (NAS)', n, ROUND(n*100.0/(w+c+n+s+l),2) FROM delays
+    UNION ALL
+    SELECT 'Sécurité', s, ROUND(s*100.0/(w+c+n+s+l),2) FROM delays
+    UNION ALL
+    SELECT 'Avion précédent', l, ROUND(l*100.0/(w+c+n+s+l),2) FROM delays
+) AS causes
+ORDER BY pct_total DESC;  -- Trier par importance (% du retard total)
